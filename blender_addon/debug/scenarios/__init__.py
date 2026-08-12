@@ -23,11 +23,13 @@ REPO_ROOT_POSIX: str = os.path.abspath(
 on Windows would otherwise emit backslash escapes."""
 
 from . import rig_launch_config
+from . import rig_session_artifact_identity
 from . import server_smoke
 from . import upload_id_changes
 from . import bl_connect_local
 from . import bl_connect_win_native
 from . import bl_connection_path_validation
+from . import bl_ssh_proxy_jump
 from . import bl_win_native_root_resolve
 from . import bl_solver_gpu_select
 from . import bl_direct_disk_transfer
@@ -94,6 +96,7 @@ from . import bl_sand_emulated_roundtrip
 from . import bl_emulated_angular_spin
 from . import bl_emulated_world_spin
 from . import bl_timeline_statistics
+from . import bl_stale_statistics_manifest
 from . import bl_bend_reference_shell
 from . import bl_bend_anisotropy_uv
 from . import bl_bend_aniso_reference
@@ -253,6 +256,11 @@ REGISTRY = {
     # Blender it configures.
     "rig_launch_config": rig_launch_config,
 
+    # The identity the runner's cached session artifacts carry, driven
+    # through the real fetch entry points against a fake backend. Needs
+    # neither Blender nor a solver, so it runs wherever the rig does.
+    "rig_session_artifact_identity": rig_session_artifact_identity,
+
     # Blender-driven scenarios. These produce real ``data.pickle`` via
     # the addon's encoder, exercising the full pipeline:
     # addon -> upload -> frontend.populate -> frontend.make ->
@@ -260,6 +268,7 @@ REGISTRY = {
     "bl_connect_local": bl_connect_local,
     "bl_connect_win_native": bl_connect_win_native,
     "bl_connection_path_validation": bl_connection_path_validation,
+    "bl_ssh_proxy_jump": bl_ssh_proxy_jump,
     "bl_win_native_root_resolve": bl_win_native_root_resolve,
     "bl_solver_gpu_select": bl_solver_gpu_select,
     "bl_direct_disk_transfer": bl_direct_disk_transfer,
@@ -328,6 +337,7 @@ REGISTRY = {
     "bl_emulated_angular_spin": bl_emulated_angular_spin,
     "bl_emulated_world_spin": bl_emulated_world_spin,
     "bl_timeline_statistics": bl_timeline_statistics,
+    "bl_stale_statistics_manifest": bl_stale_statistics_manifest,
     "bl_bend_reference_shell": bl_bend_reference_shell,
     "bl_bend_anisotropy_uv": bl_bend_anisotropy_uv,
     "bl_bend_aniso_reference": bl_bend_aniso_reference,

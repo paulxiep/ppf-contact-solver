@@ -38,6 +38,7 @@ def connect_ssh(
     remote_path: str,
     port: int = 22,
     container: Optional[str] = None,
+    proxy_jump: Optional[str] = None,
 ):
     """Establish SSH connection to remote server for contact solver.
 
@@ -48,6 +49,9 @@ def connect_ssh(
         remote_path: Remote working directory path
         port: SSH port
         container: Docker container name (optional)
+        proxy_jump: Jump host(s) to tunnel through, as ssh -J takes them,
+            "[user@]host[:port]" comma separated (optional). Left unset, the
+            ProxyJump entry in ~/.ssh/config for the host applies.
     """
     # Set connection parameters in scene state
     _, props = _get_connection_state()
@@ -59,6 +63,7 @@ def connect_ssh(
     props.key_path = key_path
     props.ssh_remote_path = remote_path
     props.port = port
+    props.proxy_jump = proxy_jump or ""
     if container:
         props.container = container
         props.server_type = "DOCKER_SSH"
@@ -74,6 +79,7 @@ def connect_ssh(
         "host": host,
         "port": port,
         "container": container,
+        "proxy_jump": proxy_jump,
     }
 
 
@@ -277,6 +283,8 @@ def get_connection_info():
             ssh_config["username"] = ssh_state.username
         if ssh_state.key_path:
             ssh_config["key_path"] = ssh_state.key_path
+        if ssh_state.proxy_jump:
+            ssh_config["proxy_jump"] = ssh_state.proxy_jump
 
         # Use the correct remote path based on server type
         if ssh_state.server_type in ["CUSTOM", "COMMAND"]:

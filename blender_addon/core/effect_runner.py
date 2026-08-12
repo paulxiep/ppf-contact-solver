@@ -175,6 +175,11 @@ class EffectRunner:
         self._anim_surface_map: dict = {}
         self._anim_statistics_manifest: bytes | None = None
         self._anim_statistics_zero_fetched = False
+        # The upload the three session artifacts above were downloaded
+        # for. They are fetched only while unset, so without an identity
+        # they outlive the dataset they describe; see
+        # ``_drop_stale_session_artifacts``.
+        self._anim_upload_id: str | None = None
         self._anim_frames: list[tuple[int, numpy.ndarray, list[bytes]]] = []
         self._anim_total: int = 0
         self._anim_applied: int = 0
@@ -322,6 +327,7 @@ class EffectRunner:
                     self._anim_surface_map = {}
                     self._anim_statistics_manifest = None
                     self._anim_statistics_zero_fetched = False
+                    self._anim_upload_id = None
 
             # -- Terminate / Save-and-quit (commands) --
             case DoTerminate():
@@ -572,6 +578,7 @@ class EffectRunner:
             self._anim_surface_map = {}
             self._anim_statistics_manifest = None
             self._anim_statistics_zero_fetched = False
+            self._anim_upload_id = None
             self._anim_frames.clear()
             self._anim_total = 0
             self._anim_applied = 0
@@ -1021,6 +1028,53 @@ class EffectRunner:
             console.write(f"[count_remote_frames] {e}")
         return 0
 
+    def _drop_stale_session_artifacts(self) -> None:
+        """Drop the cached session artifacts when they describe an earlier upload.
+
+        ``_anim_map``, ``_anim_surface_map`` and
+        ``_anim_statistics_manifest`` are downloaded once and reused for
+        every frame of a fetch, which is what keeps a live run from
+        re-reading them on each poll. They describe ONE uploaded dataset,
+        though: a scene whose group set changed produces frames with a
+        different object set, and ``decode_frame`` rejects those against
+        the previous manifest ("statistics frame object count does not
+        match manifest"), so every frame of the new run is dropped.
+
+        Clearing them at the transitions that rebuild a session is what
+        the fetch path already does (``DoResetAnimationBuffer``), but
+        Transfer and Run emit ``DoClearAnimation``, which drops the queued
+        frames and the counters and leaves these three in place. Rather
+        than adding this to the list of places that must remember, bind
+        the artifacts to the upload they came from: the server mints a
+        fresh ``upload_id`` for each upload and echoes it on every status
+        response, so any path that lands a new dataset invalidates them,
+        including one another client initiated.
+
+        Called at both fetch entry points, before anything reads them.
+
+        The queued frames go with them, under the one lock, because a frame
+        was fetched against these artifacts and cannot be applied against
+        the next set: ``take_one_animation_frame`` hands the map to the
+        main thread, and a frame drawn while the map is empty applies to
+        no object at all and writes no PC2, silently. Every other place
+        that drops the artifacts (``DoResetAnimationBuffer``,
+        ``_do_disconnect``) clears the queue in the same breath for the
+        same reason. Both callers set the counters after this returns, so
+        zeroing them here cannot race a fetch already in progress.
+        """
+        upload_id = str(self._response_cache.get("upload_id", "") or "")
+        with self._anim_lock:
+            if self._anim_upload_id == upload_id:
+                return
+            self._anim_upload_id = upload_id
+            self._anim_map = {}
+            self._anim_surface_map = {}
+            self._anim_statistics_manifest = None
+            self._anim_statistics_zero_fetched = False
+            self._anim_frames.clear()
+            self._anim_total = 0
+            self._anim_applied = 0
+
     def _ensure_anim_map(self, root: str) -> None:
         """Download animation map if not already loaded. No event dispatched."""
         with self._anim_lock:
@@ -1077,6 +1131,7 @@ class EffectRunner:
             if not self._project_name:
                 self._engine.dispatch(FetchFailed(reason="fetch map: no project"))
                 return
+            self._drop_stale_session_artifacts()
             self._ensure_anim_map(root)
             with self._anim_lock:
                 anim_map = self._anim_map
@@ -1118,6 +1173,7 @@ class EffectRunner:
                     self._engine.dispatch(FetchComplete(total_frames=0))
                 return
 
+            self._drop_stale_session_artifacts()
             self._ensure_anim_map(root)
             if self._anim_statistics_manifest is None:
                 manifest_path = _server_join(

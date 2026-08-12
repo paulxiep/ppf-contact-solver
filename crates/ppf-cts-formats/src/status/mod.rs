@@ -142,6 +142,20 @@ pub enum CrashKind {
     /// actually armed on the device, as read from `cudaDeviceProp` before
     /// the run started.
     WatchdogTimeout,
+    /// This GPU's compute capability has no cubin in the shipped device
+    /// image, so no kernel can launch on it.
+    ///
+    /// Device LTO embeds no JIT-able PTX, so the image runs on the
+    /// architectures it was linked for and nothing else. `check_gpu` normally
+    /// rejects such a device before a run starts, but it reads `nvidia-smi`
+    /// and so cannot answer when that tool is missing or the solver binary was
+    /// launched directly. The solver therefore asks the device itself, by
+    /// launching a trivial probe kernel during `initialize()`, and reports the
+    /// answer here rather than as a generic [`CrashKind::CudaDriver`]: the
+    /// action is a solver built for this GPU, not a driver reinstall. The
+    /// detail names the device's own compute capability and the architectures
+    /// the image carries.
+    ArchUnsupported,
     /// Rust host panic, from the panic hook.
     Panic,
     /// A solver internal invariant failed and the run was stopped at the
@@ -206,6 +220,9 @@ impl CrashKind {
             CrashKind::WatchdogTimeout => {
                 "A GPU kernel ran past the operating system's watchdog timeout"
             }
+            CrashKind::ArchUnsupported => {
+                "This GPU's architecture is not in the solver's device image"
+            }
             CrashKind::Panic => "Solver host panicked",
             CrashKind::SolverInvariant => "Solver stopped on a failed internal check",
             CrashKind::DeviceAssert => "A solver invariant failed on the GPU",
@@ -234,6 +251,7 @@ impl CrashKind {
             CrashKind::Oom => "oom",
             CrashKind::CudaDriver => "cuda_driver",
             CrashKind::WatchdogTimeout => "watchdog_timeout",
+            CrashKind::ArchUnsupported => "arch_unsupported",
             CrashKind::Panic => "panic",
             CrashKind::SolverInvariant => "solver_invariant",
             CrashKind::DeviceAssert => "device_assert",
@@ -257,6 +275,7 @@ impl CrashKind {
         CrashKind::Oom,
         CrashKind::CudaDriver,
         CrashKind::WatchdogTimeout,
+        CrashKind::ArchUnsupported,
         CrashKind::Panic,
         CrashKind::SolverInvariant,
         CrashKind::DeviceAssert,
@@ -324,6 +343,9 @@ pub mod error_code {
     pub const DEVICE_ASSERT: u8 = 5;
     /// `cudaErrorLaunchTimeout`: the OS kernel-execution watchdog fired.
     pub const WATCHDOG_TIMEOUT: u8 = 6;
+    /// The probe kernel could not launch: this device's architecture has no
+    /// cubin in the shipped image.
+    pub const ARCH_UNSUPPORTED: u8 = 7;
 }
 
 /// Map a fatal `error_code` (see [`error_code`]) to a [`CrashKind`].
@@ -337,6 +359,7 @@ pub fn crash_kind_from_error_code(code: u8) -> Option<CrashKind> {
         error_code::SOLVER_INVARIANT => Some(CrashKind::SolverInvariant),
         error_code::DEVICE_ASSERT => Some(CrashKind::DeviceAssert),
         error_code::WATCHDOG_TIMEOUT => Some(CrashKind::WatchdogTimeout),
+        error_code::ARCH_UNSUPPORTED => Some(CrashKind::ArchUnsupported),
         _ => None,
     }
 }

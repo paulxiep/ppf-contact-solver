@@ -8,6 +8,30 @@ NVCC=/usr/local/cuda/bin/nvcc
 OUT_DIR=build
 LIBDIR=$(OUT_DIR)/lib
 
+# CUDA architectures, read from the manifest beside this file rather than
+# spelled out here. cuda_arch.txt records why it is the single source and which
+# consumers derive from it. It is parsed with awk off a ';'-commented,
+# space-separated file so build.bat can read the same file with cmd.exe's
+# `for /f` and the two builds cannot come to ship different architectures.
+CUDA_ARCH_FILE := cuda_arch.txt
+CUDA_ARCH_FLOOR := $(strip $(shell awk '$$1=="floor"{print $$2; exit}' $(CUDA_ARCH_FILE) 2>/dev/null))
+CUDA_ARCH_CUBINS := $(strip $(shell awk '$$1=="cubin"{print $$2}' $(CUDA_ARCH_FILE) 2>/dev/null))
+# A missing or unparsable manifest stops the build here. Continuing on an empty
+# list would link a .so carrying no device code, which surfaces much later as
+# every GPU being rejected at run time, and that failure names the device rather
+# than the file that actually went missing.
+ifeq ($(CUDA_ARCH_FLOOR),)
+$(error no 'floor' line in $(CURDIR)/$(CUDA_ARCH_FILE))
+endif
+ifeq ($(CUDA_ARCH_CUBINS),)
+$(error no 'cubin' lines in $(CURDIR)/$(CUDA_ARCH_FILE))
+endif
+# One -gencode per cubin, every one lowered from the single floor IR.
+CUDA_GENCODE := $(foreach arch,$(CUDA_ARCH_CUBINS),-gencode arch=compute_$(CUDA_ARCH_FLOOR),code=sm_$(arch))
+# Rendered "sm_86, sm_89, ..." for the text main.cu prints when it rejects a
+# device, so that message cannot name a different set from the one linked.
+CUDA_ARCH_LIST_STR := $(shell awk '$$1=="cubin"{printf "%ssm_%s", (n++?", ":""), $$2}' $(CUDA_ARCH_FILE))
+
 # Warning suppressions
 SUPPRESS_WARNINGS=1222 2527 2529 2651 2653 2668 2669 2670 2671 2735 2737 2739 20012 20011 20014 177 940 1394
 
@@ -24,16 +48,21 @@ NVCC_FLAGS += $(foreach warn,$(SUPPRESS_WARNINGS),--diag-suppress=$(warn))
 # kernels (a 255-register ABI call otherwise) and roughly halving contact
 # matrix-assembly cost.
 #
-# The LTO IR is at the compute_86 virtual arch, so sm_86 (Ampere) is the floor
-# and every device target in the link below emits native SASS from this IR.
+# The LTO IR sits at the floor virtual arch (compute_86 as shipped), and every
+# device target in the link below emits native SASS from that IR.
 # IMPORTANT: device LTO CANNOT embed a JIT-able PTX. The -dlto link lowers its IR
 # straight to SASS; a code=compute_XX request is silently dropped (verified with
 # cuobjdump: an LTO link yields cubins only, zero PTX). The .so is therefore
 # frozen to the exact SASS images we ship, there is no forward-JIT fallback, so
-# we enumerate a cubin per supported arch at the link and add a new entry (then
-# rebuild) whenever a new GPU generation ships. nvcc rejects -dlto beside -gencode
-# at compile, hence code=lto_86 here and the full -gencode list only at the link.
-NVCC_FLAGS += -gencode arch=compute_86,code=lto_86
+# a cubin per supported arch is enumerated at the link. Adding a GPU generation
+# is one line in cuda_arch.txt plus a rebuild. nvcc rejects -dlto beside
+# -gencode at compile, hence code=lto_<floor> here and the full -gencode list
+# only at the link.
+NVCC_FLAGS += -gencode arch=compute_$(CUDA_ARCH_FLOOR),code=lto_$(CUDA_ARCH_FLOOR)
+# The architectures this image ships, as text, for the run-time rejection
+# message. Single-quoted so the embedded ", " survives the shell and reaches
+# nvcc as one argument holding a C string literal.
+NVCC_FLAGS += -DPPF_SHIPPED_ARCH_STR='"$(CUDA_ARCH_LIST_STR)"'
 
 # nvcc flags for C++ files (compiled as host code)
 NVCC_CPP_FLAGS=-std=c++17 -O3 -MMD -Xcompiler -fPIC,-Wall,-Wno-unused-function
@@ -55,7 +84,13 @@ all: $(LIBDIR)/libsimbackend_cuda.so $(LIBDIR)/libsimplelog.so
 
 # Objects depend on the Makefile so a flags change forces a recompile (nvcc's
 # mtime view only tracks sources; without this a flag-only edit relinks stale .o).
-$(OUT_DIR)/cuda/%.o: %.cu Makefile
+# They depend on the architecture manifest for the same reason and it is not the
+# same file: editing it changes both the LTO floor these are compiled to and the
+# PPF_SHIPPED_ARCH_STR baked into main.cu, neither of which make can see through
+# the flags alone. Without this an arch edit leaves every .o stale, and the
+# result is caught only later, by arch_guard, as a build failure telling the
+# reader to delete the build directory.
+$(OUT_DIR)/cuda/%.o: %.cu Makefile $(CUDA_ARCH_FILE)
 	mkdir -p $(@D)
 	$(NVCC) -c $(NVCC_FLAGS) $< -o $@
 
@@ -103,15 +138,13 @@ $(OUT_DIR)/cpp/%.o: %.cpp Makefile
 # builds a single arch (lto_86), where -t has nothing to overlap and measured no
 # gain (solver.cu: 5.3 s with -t 16 vs 5.4 s without), and make already runs the
 # compiles -j wide, so each of the 17 would stack its own thread pool on top.
-$(LIBDIR)/libsimbackend_cuda.so: $(CUDA_OBJS) $(SIMPLELOG_OBJS) $(STUB_OBJS)
+# The manifest is a prerequisite because the -gencode list is derived from it:
+# an arch added or removed there changes this link and nothing else, so without
+# it make would consider an image built for the previous list up to date. $^
+# would then also feed the manifest to nvcc as an input file, hence $(filter-out).
+$(LIBDIR)/libsimbackend_cuda.so: $(CUDA_OBJS) $(SIMPLELOG_OBJS) $(STUB_OBJS) $(CUDA_ARCH_FILE)
 	mkdir -p $(LIBDIR)
-	$(NVCC) -shared -dlto -t 0 \
-		-gencode arch=compute_86,code=sm_86 \
-		-gencode arch=compute_86,code=sm_89 \
-		-gencode arch=compute_86,code=sm_90 \
-		-gencode arch=compute_86,code=sm_100 \
-		-gencode arch=compute_86,code=sm_120 \
-		-o $@ $^
+	$(NVCC) -shared -dlto -t 0 $(CUDA_GENCODE) -o $@ $(filter-out $(CUDA_ARCH_FILE),$^)
 
 # SimpleLog library (for standalone use)
 $(LIBDIR)/libsimplelog.so: $(SIMPLELOG_OBJS)

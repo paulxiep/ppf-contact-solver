@@ -25,6 +25,7 @@ _SSH_STATE_FIELDS = {
     "port": "port",
     "username": "username",
     "key_path": "key_path",
+    "proxy_jump": "proxy_jump",
     "command": "command",
     "container": "container",
     "remote_path": "ssh_remote_path",

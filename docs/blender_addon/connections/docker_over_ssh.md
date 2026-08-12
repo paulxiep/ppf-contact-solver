@@ -34,7 +34,8 @@ and runs every Docker command there.
 1. Set **Server Type** to `Docker over SSH`.
 2. Fill **Host** / **Port** / **User** / **SSH Key** as in SSH
    Custom mode -- these locate the remote host that runs the Docker
-   daemon.
+   daemon. Fill **Proxy Jump** as well if that host is only reachable
+   through a bastion (see {ref}`Jump Hosts <jump-hosts>`).
 3. Fill **Container** with the container name on the *remote* daemon
    (e.g. `ppf-dev`). The add-on runs `docker exec` against this name
    over the SSH session.

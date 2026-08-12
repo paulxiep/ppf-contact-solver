@@ -198,6 +198,7 @@ Figure: Backend Communicator with **Server Type** set to `SSH`. **Host**, **Port
 | Port | `22` | SSH port. |
 | Username | `""` | Remote user. Leave empty to use SSH config's `User`. |
 | Key Path | `~/.ssh/id_ed25519` or `~/.ssh/id_rsa` | Private key file. |
+| Proxy Jump | `""` | Jump host to tunnel through, in `ssh -J` form: `[user@]host[:port]`, comma separated for a chain. Empty uses the alias's `ProxyJump` from `~/.ssh/config`. See Jump hosts. |
 | Remote Path | `""` | Remote solver directory, e.g. `/root/ppf-contact-solver` (must contain the built `ppf-cts-server` binary). |
 | GPU | `Automatic` | Which CUDA device on the REMOTE host the solver runs on. The list is read from that host, so it is offered once connected. See Choosing a GPU. |
 | Server Port | `9090` | Port on the remote host where `ppf-cts-server` listens. |
@@ -215,9 +216,10 @@ The add-on ships its own minimal parser, it does **not** shell out to the system
 | `Port` | yes | |
 | `User` | yes | |
 | `IdentityFile` | yes | `~` is expanded. Only the first match per host wins; multiple `IdentityFile` lines are not tried in sequence. |
+| `ProxyJump` | yes | Each jump host is resolved through the config in turn, so an alias brings its own `HostName` / `Port` / `User` / `IdentityFile`, and a jump host that has a `ProxyJump` of its own extends the chain. `none` connects directly. See Jump hosts. |
 | `Include` | yes | Relative paths resolve against `~/.ssh/`. Globs (`*`, `?`) expand. |
 
-Everything else, including `ProxyJump`/`ProxyCommand`, `Match`, `ForwardAgent`, `LocalForward`/`RemoteForward`, `StrictHostKeyChecking`, `UserKnownHostsFile`, `PreferredAuthentications`, `IdentitiesOnly`, `CertificateFile`, `ControlMaster`/`ControlPath`/`ControlPersist`, `ServerAliveInterval`/`ServerAliveCountMax`, `ConnectTimeout`, `AddressFamily`, `BindAddress`, `LogLevel`, `PubkeyAcceptedAlgorithms`, and `SetEnv`, is silently ignored. If your workflow depends on any of them (for example, reaching a host only through a bastion with `ProxyJump`), the add-on cannot connect and there is no workaround inside the panel. Host-key checking is always `AutoAddPolicy` regardless of what your config says, and the keepalive interval is hard-coded to 30 s (see Keepalive and timeouts).
+Everything else, including `ProxyCommand`, `Match`, `ForwardAgent`, `LocalForward`/`RemoteForward`, `StrictHostKeyChecking`, `UserKnownHostsFile`, `PreferredAuthentications`, `IdentitiesOnly`, `CertificateFile`, `ControlMaster`/`ControlPath`/`ControlPersist`, `ServerAliveInterval`/`ServerAliveCountMax`, `ConnectTimeout`, `AddressFamily`, `BindAddress`, `LogLevel`, `PubkeyAcceptedAlgorithms`, and `SetEnv`, is silently ignored. Host-key checking is always `AutoAddPolicy` regardless of what your config says, and the keepalive interval is hard-coded to 30 s (see Keepalive and timeouts).
 
 ### Setup - Command mode
 
@@ -232,9 +234,11 @@ Paste a shell-style SSH command and the add-on extracts host, port, username, an
 
 3. Set **Remote Path** and **Server Port** as above. Click **Connect**.
 
-The parser understands the most common flags: `-p` for port, `-i` for key path, and `user@host`. Advanced flags like `-o`, `-J`, or `ProxyCommand` are **not** honored, if you need those, use Custom mode and let `~/.ssh/config` provide them.
+The parser reads the destination (`[user@]host`, or an `ssh://user@host:port` URI) plus `-p` for port, `-i` for key path, `-l` for login name, `-J` for jump hosts, and the same four settings written as `-o Port=`, `-o IdentityFile=`, `-o User=`, `-o ProxyJump=`. Every other ssh option is accepted and ignored, including `-F`: the add-on always reads `~/.ssh/config`. A setting given twice keeps the first value, so `-p` outranks a later `-o Port=`.
 
-If the command cannot be parsed (no host token found), the operator reports an error and aborts.
+Options are matched against the real ssh option list rather than by a leading dash, so an option consumes its own argument. `ssh -p 2222 gpu-alias` connects to `gpu-alias` on port 2222, and `ssh -J me@bastion gpu01` reads `me@bastion` as the jump host rather than as the destination. Options written after the destination count too (`ssh gpu01 -p 2222`), matching ssh itself; anything past a second bare word is the remote command and is ignored.
+
+If the command cannot be parsed, the operator reports why and aborts: an unknown option, an option missing its argument, an unbalanced quote, or no host token at all.
 
 ### SSH keys
 
@@ -252,9 +256,27 @@ If the command cannot be parsed (no host token found), the operator reports an e
 
 The keepalive pings the remote every 30 seconds to prevent idle disconnects on NATed links. The UI modal gives up after 60 seconds if the connect has not completed.
 
+### Jump hosts
+
+A solver host that is only routable from a bastion is reached by naming the bastion, and the add-on opens the hops itself. Every SSH-backed type supports it:
+
+- **SSH** and **Docker over SSH**: type the jump host into **Proxy Jump**, in the form `ssh -J` takes it (`[user@]host[:port]`, comma separated for a chain, hops ordered outward from your machine).
+- **SSH Command** and **Docker over SSH Command**: put `-J` (or `-o ProxyJump=`) in the command, exactly as you would run it in a shell.
+- Either way, leaving it empty falls back to the `ProxyJump` entry `~/.ssh/config` gives for the host, so a host already configured for the terminal needs nothing typed in the panel.
+
+```text
+ssh -J bastion.example.com gpu01.internal        # Command mode
+bastion.example.com                              # Proxy Jump field
+alice@bastion.example.com:2222,inner.internal    # two hops, first one reached directly
+```
+
+Each hop is resolved through `~/.ssh/config` the same way the destination is, so a jump host written as an alias brings its own `HostName`, `Port`, `User`, and `IdentityFile`, and a jump host whose own config carries a `ProxyJump` extends the chain in front of itself. A user or port written into the spec overrides what the config says for that alias. A hop with no `IdentityFile` authenticates with your agent and default keys, the same way `ssh` would.
+
+The hops are opened in order, each one tunneled through the one before it, and the connection to the solver host rides the last one. They are torn down with the connection, and on **Disconnect** they close from the far end inward. A hop that refuses the connection reports which one it was (`Jump host bastion.example.com:22 failed: ...`) and closes the hops already opened. A spec that names no host, or one whose jump hosts point back at each other, is refused before anything is dialed.
+
 ### Port forwarding and tunnels
 
-The bundled parser ignores `LocalForward`, `RemoteForward`, `ProxyJump`, and `ProxyCommand` (see Supported ssh_config options), so the panel cannot stand up an SSH tunnel on its own. If the solver host is only reachable through a bastion or over a forwarded port, set up the tunnel from a separate terminal first and point the add-on at the local end:
+The bundled parser ignores `LocalForward`, `RemoteForward`, and `ProxyCommand` (see Supported ssh_config options), so the panel cannot stand up a forwarded port on its own. For a bastion, use Jump hosts above. If the solver host is reachable only over a port you forward yourself, set up the tunnel from a separate terminal first and point the add-on at the local end:
 
 ```bash
 # Example: reach a solver host behind a bastion via local forward.

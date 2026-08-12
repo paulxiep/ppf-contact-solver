@@ -466,6 +466,7 @@ class MAIN_PT_RemotePanel(Panel):
                 col.prop(props, "username")
                 col.prop(props, "key_path")
                 _draw_path_warning(col, props.key_path)
+                col.prop(props, "proxy_jump")
             elif props.server_type == "DOCKER":
                 col.prop(props, "container")
             elif props.server_type == "DOCKER_SSH":
@@ -474,6 +475,7 @@ class MAIN_PT_RemotePanel(Panel):
                 col.prop(props, "username")
                 col.prop(props, "key_path")
                 _draw_path_warning(col, props.key_path)
+                col.prop(props, "proxy_jump")
                 col.prop(props, "container")
             elif props.server_type == "DOCKER_SSH_COMMAND":
                 col.prop(props, "command")

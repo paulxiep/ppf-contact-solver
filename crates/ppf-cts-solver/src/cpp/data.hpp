@@ -290,22 +290,22 @@ struct HingeProp {
 // and picks up `warp`. Read at the fiber level it is the natural reading:
 // `warp` is how stiff the warp fibers are to being bent.
 //
-// The form is additive and linear in sin^2, which buys two things over the
-// quartic orthotropic transformation it replaces. Every term is non-negative
-// for non-negative inputs, so the result cannot go negative at any
-// orientation and there is no material-stability condition to enforce or to
-// explain. And `bend` keeps meaning exactly what it meant before anisotropy
-// existed: the directional pair ADDS to it rather than redistributing it, so
-// the calibrated isotropic value (BEND_SCALE in energy.cu,
-// calibration/cusick_drape) is untouched and every existing preset holds.
+// The form is additive and linear in sin^2, and two properties follow from
+// that. Every term is non-negative for non-negative inputs, so the result
+// cannot go negative at any orientation and there is no material-stability
+// condition to enforce or to explain. And the directional pair ADDS to
+// `bend` rather than redistributing it, so `bend` alone sets the isotropic
+// stiffness at every orientation: the calibrated value (BEND_SCALE in
+// energy.cu, calibration/cusick_drape) is what the presets carry, and they
+// need no directional term to hold it.
 //
 // The cost is that the 45 degree bias stiffness is not independently
 // settable; it is bend + (warp + weft)/2. Real woven fabric is floppiest on
 // the bias, below both axes, which this cannot express.
 //
 // With warp and weft at their 0.0f defaults the result is `bend` exactly, for
-// any orientation and including the no-UV sentinel, so a scene that does not
-// ask for anisotropy is bit-identical to one built before this existed.
+// any orientation and including the no-UV sentinel, so a scene that leaves
+// both at 0.0f is not perturbed by their presence.
 __device__ __host__ inline float hinge_bend_directional(float bend, float warp,
                                                         float weft,
                                                         float sin2) {

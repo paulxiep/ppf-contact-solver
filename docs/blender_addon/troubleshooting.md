@@ -39,18 +39,32 @@ is in `~/.ssh/authorized_keys` on the remote.
 
 ### "Failed to parse command. Ensure it includes host."
 
-Only `ssh -p <port> -i <key> user@host` parses. For `-o`, `-J`, or
-`ProxyCommand` setups, switch to **SSH Custom** mode and let
-`~/.ssh/config` fill in the blanks.
+The command names no destination. The parser reads `[user@]host` plus
+`-p`, `-i`, `-l`, `-J`, and `-o Port=` / `-o IdentityFile=` /
+`-o User=` / `-o ProxyJump=`; other ssh options are accepted and
+ignored. An unknown option, an option missing its argument, and an
+unbalanced quote are reported in their own words rather than under this
+message. For a `ProxyCommand` setup, switch to **SSH Custom** mode and
+let `~/.ssh/config` fill in the blanks.
 
 ### `~/.ssh/config` host works in terminal but not in the add-on
 
 The parser understands only `Host`, `HostName`, `Port`, `User`,
-`IdentityFile`, and `Include`. `ProxyJump`, `ProxyCommand`, `Match`,
-and certificates are ignored. Bring the tunnel up from a terminal
-(`ssh -L 2222:gpu01.example.com:22 bastion.example.com`) and point the
-add-on at `localhost:2222`. See {ref}`Supported ssh_config options
-<supported-ssh-config-options>`.
+`IdentityFile`, `ProxyJump`, and `Include`. `ProxyCommand`, `Match`,
+and certificates are ignored. A bastion needs nothing done by hand:
+`ProxyJump` is honored, and the **Proxy Jump** field and `ssh -J` set
+the same thing. For the directives that are ignored, bring the tunnel up
+from a terminal (`ssh -L 2222:gpu01.example.com:22
+bastion.example.com`) and point the add-on at `localhost:2222`. See
+{ref}`Supported ssh_config options <supported-ssh-config-options>`.
+
+### "Jump host ... failed"
+
+The hop named in the message refused the connection or was unreachable;
+the hops opened before it were closed. Test the same chain from a
+terminal (`ssh -J <jump> <host>`), which uses the same hops. A message
+naming a loop instead means two `ProxyJump` entries point at each other,
+and the trail it followed is printed with it.
 
 ## Connection: Docker
 

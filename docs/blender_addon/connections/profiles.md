@@ -68,7 +68,7 @@ round-tripping through the Save button is the supported edit path.
 
 Each profile is a top-level table. The table name is free-form (quote
 it if it contains spaces or other non-bare characters). Inside the
-table, one required discriminator and up to eleven connection fields:
+table, one required discriminator and up to twelve connection fields:
 
 | TOML key | Notes |
 | -------- | ----- |
@@ -77,6 +77,7 @@ table, one required discriminator and up to eleven connection fields:
 | `port` | SSH port. |
 | `username` | SSH user. |
 | `key_path` | Private key path. `~` is expanded when used. |
+| `proxy_jump` | Jump host to tunnel through, as `ssh -J` takes it. Empty falls back to `~/.ssh/config`. |
 | `command` | Raw `ssh ...` string for Command modes. |
 | `container` | Docker container name. |
 | `remote_path` | Remote solver directory for SSH. |

@@ -52,6 +52,7 @@ enum {
     PPF_FATAL_SOLVER_INVARIANT = 4,
     PPF_FATAL_DEVICE_ASSERT = 5,
     PPF_FATAL_WATCHDOG_TIMEOUT = 6,
+    PPF_FATAL_ARCH_UNSUPPORTED = 7,
 };
 
 // Record `fmt`'s first line as the fatal detail. Split out so the CUDA error

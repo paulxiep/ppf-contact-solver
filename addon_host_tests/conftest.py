@@ -175,6 +175,41 @@ def addon_utils():
 
 
 @pytest.fixture(scope="session")
+def ssh_config():
+    """``blender_addon.core.ssh_config``, loaded from source.
+
+    It reads text files and resolves host aliases, so it imports nothing
+    from Blender and the stub in ``load_addon_module`` is never consulted.
+    """
+    _ensure_package("blender_addon.core", ADDON_ROOT / "core")
+    return load_addon_module("core.ssh_config")
+
+
+@pytest.fixture(scope="session")
+def ssh_command(ssh_config):
+    """``blender_addon.core.ssh_command``, loaded from source.
+
+    Its ``from .ssh_config import split_host_spec`` resolves against the
+    real sibling, which the fixture above has already registered.
+    """
+    return load_addon_module("core.ssh_command")
+
+
+@pytest.fixture(scope="session")
+def backends(ssh_config):
+    """``blender_addon.core.backends``, loaded from source.
+
+    Only the jump-chain helpers are reachable this way, and that is all
+    this fixture is for. Everything else in the module needs paramiko or
+    the docker package, which the add-on imports lazily inside
+    ``create_backend`` through ``core.module``, so importing the module
+    itself pulls in neither.
+    """
+    _ensure_package("blender_addon.core", ADDON_ROOT / "core")
+    return load_addon_module("core.backends")
+
+
+@pytest.fixture(scope="session")
 def cdylib():
     """The tree-local ``_ppf_cts_py``, reached the way the frontend reaches it."""
     if str(REPO_ROOT) not in sys.path:

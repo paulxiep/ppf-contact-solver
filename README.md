@@ -61,6 +61,7 @@ involving 👚 shells, 🪵 solids, 🪢 rods, 🧱 rigid bodies and ⏳ sand. S
   - [🐳 Docker (Linux and Windows)](#-docker-linux-and-windows)
 - [🐍 How To Use](#-how-to-use)
   - [🎨 Blender Add-on](#-blender-add-on)
+    - [🌏 Community Translations](#-community-translations)
   - [🌐 JupyterLab](#-jupyterlab)
     - [📚 Python APIs and Parameters](#-python-apis-and-parameters)
 - [🔍 Obtaining Logs](#-obtaining-logs)
@@ -357,6 +358,23 @@ Here's how the script runs inside Blender [(full-size)](https://zozo.box.com/s/m
 ![python-scripting](./docs/blender_addon/images/screenshots/python-scripting.jpg)
 
 For the full `solver.*` surface, see the [Blender Python API guide](https://st-tech.github.io/ppf-contact-solver/blender_addon/integrations/python_api.html).
+
+#### 🌏 Community Translations
+
+Our add-on ships UI catalogs for 日本語, 简体中文, and 한국어, selectable from **Edit → Preferences → Interface → Translation**.
+[narznarznarz](https://github.com/narznarznarz) polished our Korean catalog to match Blender's own Korean terminology [(Discussion)](https://github.com/st-tech/ppf-contact-solver/discussions/94):
+
+- 🇰🇷 [`ko_KR.json`](https://github.com/narznarznarz/ppf-contact-solver/blob/narznarznarz-patch-1/blender_addon/i18n/ko_KR.json) by [narznarznarz](https://github.com/narznarznarz)
+
+To install, [download it](https://raw.githubusercontent.com/narznarznarz/ppf-contact-solver/narznarznarz-patch-1/blender_addon/i18n/ko_KR.json) (keep the name `ko_KR.json`) and overwrite the `ko_KR.json` in the installed add-on's `i18n` directory, which this prints in Blender's **Python Console**:
+
+```python
+import addon_utils, os
+addon = next(m for m in addon_utils.modules() if m.__name__.endswith(".ppf_contact_solver"))
+print(os.path.join(os.path.dirname(addon.__file__), "i18n"))
+```
+
+Then restart Blender. Updating the add-on restores our catalog, so re-apply it after an update.
 
 ### 🌐 JupyterLab
 

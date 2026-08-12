@@ -47,14 +47,14 @@ This file condenses `docs/blender_addon/troubleshooting.md` into a self-containe
 ### "Failed to parse command. Ensure it includes host."
 
 - You see: this after clicking **Connect** in SSH Command mode.
-- Why: the pasted string has no recognizable host token. The bundled parser only understands `-p`, `-i`, `user@host`, and the first bare host token.
-- Fix: use `ssh -p <port> -i <key> user@host`. For any `-o`, `-J`, or `ProxyCommand` setup, switch to SSH Custom mode and let `~/.ssh/config` fill in the blanks.
+- Why: the pasted string has no recognizable host token, or it carries an option the parser refuses (an unknown one, or one missing its argument). The parser reads the destination plus `-p`, `-i`, `-l`, `-J`, and `-o Port=/IdentityFile=/User=/ProxyJump=`; other ssh options are accepted and ignored.
+- Fix: use `ssh -p <port> -i <key> user@host`, adding `-J user@bastion` when the host is behind a jump host. The reported message names the specific problem. For `ProxyCommand` or any other setup the parser ignores, switch to SSH Custom mode and let `~/.ssh/config` fill in the blanks.
 
 ### `~/.ssh/config` options not honored
 
 - You see: a host that works from your terminal fails from the add-on, or connects to the wrong place.
-- Why: the add-on's `ssh_config` parser only understands `Host`, `HostName`, `Port`, `User`, `IdentityFile`, `Include`. Everything else (`ProxyJump`, `ProxyCommand`, `Match`, `StrictHostKeyChecking`, `IdentitiesOnly`, certificates) is ignored. See connections.md for the supported subset.
-- Fix: bring up the tunnel or bastion from a terminal (e.g. `ssh -L 2222:gpu01.internal:22 bastion`) and point the add-on at `localhost:2222`.
+- Why: the add-on's `ssh_config` parser only understands `Host`, `HostName`, `Port`, `User`, `IdentityFile`, `ProxyJump`, `Include`. Everything else (`ProxyCommand`, `Match`, `StrictHostKeyChecking`, `IdentitiesOnly`, certificates) is ignored. See connections.md for the supported subset.
+- Fix: a bastion needs nothing done by hand, `ProxyJump` is honored (the panel's **Proxy Jump** field and `ssh -J` set it too). For the rest, bring up the tunnel from a terminal (e.g. `ssh -L 2222:gpu01.internal:22 bastion`) and point the add-on at `localhost:2222`.
 
 Note: the add-on accepts unknown host keys silently (paramiko `AutoAddPolicy`). Host-key verification is not surfaced in the UI; see security.md for the trust-on-first-use caveat.
 

@@ -98,14 +98,26 @@ class CommunicatorFacade:
         container=None,
         server_port=DEFAULT_SERVER_PORT,
         keepalive_interval=DEFAULT_SSH_KEEPALIVE_INTERVAL,
+        proxy_jump=None,
     ):
-        from .ssh_config import resolve_ssh_config
+        """Open an SSH connection, optionally through one or more jump hosts.
+
+        *proxy_jump* is a jump spec in the form ``ssh -J`` takes
+        (``[user@]host[:port]``, comma separated for a chain). When it is
+        empty the ``ProxyJump`` entry the ssh config gives for *host* is used,
+        so an alias that is only reachable from a bastion connects with
+        nothing typed into the panel. Raises ValueError on a malformed spec.
+        """
+        from .ssh_config import resolve_jump_chain, resolve_ssh_config
 
         config = resolve_ssh_config(host)
         resolved_host = config.hostname
         resolved_port = port if port != 22 else config.port
         resolved_username = username if username else config.user
         resolved_key_path = key_path if key_path else config.identity_file
+
+        jump_spec = proxy_jump if proxy_jump else config.proxy_jump
+        jumps = resolve_jump_chain(jump_spec) if jump_spec else []
 
         self._dispatch_and_tick(ConnectRequested(
             backend_type="ssh",
@@ -117,6 +129,15 @@ class CommunicatorFacade:
                 "path": path,
                 "container": container or "",
                 "keepalive_interval": keepalive_interval,
+                "jumps": [
+                    {
+                        "host": hop.hostname,
+                        "port": hop.port,
+                        "username": hop.user,
+                        "key_path": hop.identity_file,
+                    }
+                    for hop in jumps
+                ],
             },
             server_port=server_port,
         ))

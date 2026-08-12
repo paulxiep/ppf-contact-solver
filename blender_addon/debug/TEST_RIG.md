@@ -52,11 +52,11 @@ python3.12 blender_addon/debug/main.py runtests bl_connect_local
 python3.12 blender_addon/debug/main.py runtests --parallel 4 --repeat 3 --report run.json
 ```
 
-The rig is all-green on macOS, Linux, and Windows. The registry holds
-178 scenarios and each host runs the subset its ``PLATFORMS`` gates
-admit: 170 on macOS, 173 on Linux, 171 on Windows. ``runtests --list``
-prints the set for the host you are on, which is the number to trust;
-the figures here are a sanity check, not the source of truth. Chain
+The rig is all-green on macOS, Linux, and Windows. Each host runs the
+subset its ``PLATFORMS`` and ``BACKENDS`` gates admit. ``runtests
+--list`` prints that set for the host you are on and is the only source
+of truth for its size, so count its output rather than looking for a
+figure here. Chain
 scenarios can flake at ``--parallel 4`` (see "Parallel mode caveats"
 below); drop to ``--parallel 2`` if you need stable chain results.
 
@@ -156,8 +156,8 @@ only works on Linux/macOS). See ``bl_real_solid_smoke`` for the pattern.
 ## Scenarios
 
 All registered scenarios live in ``blender_addon/debug/scenarios/`` and
-are wired into the ``REGISTRY`` dict in ``scenarios/__init__.py`` (178
-entries at last count). They split into two families:
+are wired into the ``REGISTRY`` dict in ``scenarios/__init__.py``. They
+split into two families:
 
 Server-only (no Blender needed; do not require a build, just exercise
 the wire protocol or the rig's own helpers):
@@ -175,7 +175,7 @@ the wire protocol or the rig's own helpers):
 
 Blender-driven (opt-in, requires Blender; see the per-OS search order
 under "Displays on Linux", or set ``PPF_BLENDER_BIN``): every other
-entry, 170 of them on Linux. They cover connect paths
+entry. They cover connect paths
 (``bl_connect_local`` is Linux-only,
 ``bl_connect_win_native`` is Windows-only), the pin-fidelity
 matrix, UI / state-machine integration, chain lifecycle, copy/paste

@@ -18,6 +18,15 @@ on:
         required: true
         type: boolean
         default: false
+      region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-east-2'
+        type: choice
+        options:
+          - us-east-1
+          - us-east-2
+          - ap-northeast-1
 
 jobs:
   release-windows:
@@ -31,7 +40,13 @@ jobs:
       actions: write
 
     env:
-      AWS_REGION: us-east-2
+      # Selectable because the toolchain this build downloads is served by a
+      # CDN whose copies are not equally good: an MSVC .cab that failed its
+      # manifest hash twice in us-east-2 verified clean from ap-northeast-1,
+      # so the region is the difference between a build and a dead run. The
+      # default is unchanged, and every other workflow that launches an
+      # instance already offers the same three choices.
+      AWS_REGION: ${{ github.event.inputs.region }}
       INSTANCE_TYPE: g6e.2xlarge
       WORKDIR: C:\ppf-contact-solver
       USER: Administrator

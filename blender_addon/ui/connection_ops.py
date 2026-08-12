@@ -5,7 +5,6 @@
 #
 # SSH/Docker/Local connection operators.
 
-import shlex
 import time
 
 import bpy  # pyright: ignore
@@ -16,6 +15,7 @@ from bpy.types import Operator  # pyright: ignore
 from ..core.async_op import AsyncOperator
 from ..core.client import communicator as com
 from ..core.module import module_exists
+from ..core.ssh_command import parse_ssh_command
 from ..core.utils import find_invalid_name_char, find_invalid_path_char, get_timer_wait_time, redraw_all_areas
 from ..models.groups import get_addon_data
 
@@ -125,41 +125,55 @@ class REMOTE_OT_Connect(Operator):
                 and project_name_valid
             )
 
+    def _connect_ssh(self, **kwargs) -> bool:
+        """Ask the facade for an SSH connection; report a bad jump spec.
+
+        The jump chain is resolved before anything is dispatched, so a spec
+        that names no host, or one whose hosts jump back to each other, is
+        refused here with the reason rather than surfacing as a traceback from
+        the operator.
+        """
+        try:
+            com.connect_ssh(**kwargs)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return False
+        return True
+
     def execute(self, context):
         root = get_addon_data(context.scene)
         props = root.ssh_state
         com.set_project_name(root.state.project_name)
         if props.server_type == "COMMAND" or props.server_type == "DOCKER_SSH_COMMAND":
-            command_parts = shlex.split(props.command)
-            host, port, username, key_path = None, 22, None, None
-            for i, part in enumerate(command_parts):
-                if part == "-p" and i + 1 < len(command_parts):
-                    port = int(command_parts[i + 1])
-                elif part.startswith("-i") and i + 1 < len(command_parts):
-                    key_path = command_parts[i + 1]
-                elif "@" in part:
-                    username, host = part.split("@")
-                elif not host and not part.startswith("-") and part != "ssh":
-                    host = part
-            if not host:
+            try:
+                parsed = parse_ssh_command(props.command)
+            except ValueError as exc:
+                self.report({"ERROR"}, str(exc))
+                return {"CANCELLED"}
+            if not parsed.host:
                 self.report(
                     {"ERROR"},
                     iface_("Failed to parse command. Ensure it includes host."),
                 )
                 return {"CANCELLED"}
             container = props.container if "DOCKER" in props.server_type else None
-            com.connect_ssh(
-                host=host,
-                port=port,
-                username=username,
-                key_path=key_path,
+            # The panel's own Proxy Jump field is not drawn for the command
+            # backends, where -J is where a jump host belongs, so the command
+            # is the only source here.
+            if not self._connect_ssh(
+                host=parsed.host,
+                port=parsed.port or 22,
+                username=parsed.username,
+                key_path=parsed.key_path,
                 path=self.get_remote_path(props),
                 container=container,
                 server_port=props.docker_port,
-            )
+                proxy_jump=parsed.proxy_jump,
+            ):
+                return {"CANCELLED"}
         elif props.server_type == "CUSTOM" or props.server_type == "DOCKER_SSH":
             container = props.container if "DOCKER" in props.server_type else None
-            com.connect_ssh(
+            if not self._connect_ssh(
                 host=props.host,
                 port=props.port,
                 username=props.username,
@@ -167,7 +181,9 @@ class REMOTE_OT_Connect(Operator):
                 path=self.get_remote_path(props),
                 container=container,
                 server_port=props.docker_port,
-            )
+                proxy_jump=props.proxy_jump.strip(),
+            ):
+                return {"CANCELLED"}
         elif props.server_type == "DOCKER":
             com.connect_docker(
                 props.container,

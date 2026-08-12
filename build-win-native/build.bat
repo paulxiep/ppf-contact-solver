@@ -38,7 +38,20 @@ if "%BUILD_LOGGING%"=="" (
     REM expansion is evaluated per line at execution time, so it sees the
     REM real code. Verified on Windows Server 2025: with `%ERRORLEVEL%` a
     REM child exiting 1 reports success, with `!ERRORLEVEL!` it reports 1.
-    powershell -Command "& { cmd /c 'set BUILD_LOGGING=1&& set NOPAUSE=!NOPAUSE!&& \"%~f0\"' 2>&1 | Tee-Object -FilePath '%LOGFILE%'; exit $LASTEXITCODE }"
+    REM
+    REM THE ENVIRONMENT IS SET BY POWERSHELL, NOT BY A `set ... &&` CHAIN
+    REM INSIDE THE cmd STRING, and that is load-bearing rather than tidier.
+    REM Passing the script as `\"%~f0\"` inside the -Command string requires
+    REM escaped quotes, and that spelling loses the child's exit code: the
+    REM pipeline reports 0 however the child exited, so `exit $LASTEXITCODE`
+    REM and `!ERRORLEVEL!` both faithfully forward a zero and the failure is
+    REM masked. Measured on Windows Server 2025, A/B on one host: with the
+    REM escaped-quote form a child exiting 1 gives 0, and with this form it
+    REM gives 1. Every layer here propagates correctly when tested alone (the
+    REM Tee pipeline, the `set ... &&` chain, `exit /b` from a nested block),
+    REM so the fault appears only in composition and cannot be found by
+    REM reading any single line.
+    powershell -NoProfile -Command "& { $env:BUILD_LOGGING='1'; $env:NOPAUSE='!NOPAUSE!'; cmd /c '%~f0' 2>&1 | Tee-Object -FilePath '%LOGFILE%'; exit $LASTEXITCODE }"
     exit /b !ERRORLEVEL!
 )
 
@@ -186,20 +199,60 @@ REM dropped succeeds and yields SASS identical to the link that included it
 REM (925,904 instructions either way), so it carries no device code.
 set CU_SRCS=%CPP_DIR%\buffer\buffer.cu %CPP_DIR%\main\main.cu %CPP_DIR%\utility\utility.cu %CPP_DIR%\csrmat\csrmat.cu %CPP_DIR%\contact\contact.cu %CPP_DIR%\energy\energy.cu %CPP_DIR%\eigenanalysis\eigenanalysis.cu %CPP_DIR%\barrier\barrier.cu %CPP_DIR%\strainlimiting\strainlimiting.cu %CPP_DIR%\solver\solver.cu %CPP_DIR%\schwarz\schwarz.cu %CPP_DIR%\kernels\reduce.cu %CPP_DIR%\kernels\exclusive_scan.cu %CPP_DIR%\kernels\vec_ops.cu %CPP_DIR%\kernels\radix_sort.cu %CPP_DIR%\lbvh\lbvh.cu %CPP_DIR%\plasticity\plasticity.cu
 
+REM CUDA architectures, read from the same manifest the Linux Makefile reads
+REM (crates\ppf-cts-solver\src\cpp\cuda_arch.txt). Neither build spells the list
+REM out, so the two cannot come to ship different architectures, and neither can
+REM disagree with the SUPPORTED_SM gate that is generated from the same file.
+REM `for /f` skips blank lines and ';' comments by default, which is why the
+REM manifest comments with ';'. The floor is read in its own pass so the file
+REM does not have to list it before the cubins.
+set CUDA_ARCH_FILE=%CPP_DIR%\cuda_arch.txt
+if not exist "%CUDA_ARCH_FILE%" (
+    echo ERROR: CUDA architecture manifest not found: %CUDA_ARCH_FILE%
+    exit /b 1
+)
+set ARCH_FLOOR=
+set GENCODE=
+set ARCH_LIST_STR=
+for /f "tokens=1,2" %%A in (%CUDA_ARCH_FILE%) do (
+    if "%%A"=="floor" set ARCH_FLOOR=%%B
+)
+if not defined ARCH_FLOOR (
+    echo ERROR: no 'floor' line in %CUDA_ARCH_FILE%
+    exit /b 1
+)
+for /f "tokens=1,2" %%A in (%CUDA_ARCH_FILE%) do (
+    if "%%A"=="cubin" (
+        set "GENCODE=!GENCODE! -gencode arch=compute_!ARCH_FLOOR!,code=sm_%%B"
+        if defined ARCH_LIST_STR (
+            set "ARCH_LIST_STR=!ARCH_LIST_STR!, sm_%%B"
+        ) else (
+            set "ARCH_LIST_STR=sm_%%B"
+        )
+    )
+)
+REM Stop here rather than link a DLL with no device code. That DLL builds and
+REM installs cleanly and then rejects every GPU at run time, and the run-time
+REM failure names the device rather than the manifest that went missing.
+if not defined GENCODE (
+    echo ERROR: no 'cubin' lines in %CUDA_ARCH_FILE%
+    exit /b 1
+)
+echo CUDA architectures from manifest: floor compute_!ARCH_FLOOR!, cubins !ARCH_LIST_STR!
+
 REM Compiler flags. Device link-time optimization (LTO), matching the Linux
-REM Makefile: compile each TU to an LTO intermediate (code=lto_86), then device-
-REM link with -dlto so cross-TU device callees (notably barrier::compute_stiffness)
-REM inline into the contact-Hessian embed kernels, roughly halving contact
-REM matrix-assembly cost. The LTO IR is compute_86, so sm_86 (Ampere) is the floor.
+REM Makefile: compile each TU to an LTO intermediate (code=lto_<floor>), then
+REM device-link with -dlto so cross-TU device callees (notably
+REM barrier::compute_stiffness) inline into the contact-Hessian embed kernels,
+REM roughly halving contact matrix-assembly cost.
 REM IMPORTANT: device LTO CANNOT embed a JIT-able PTX (the -dlto link lowers its IR
 REM straight to SASS; a code=compute_XX request is silently dropped), so the .dll
-REM is frozen to the exact cubins we ship, no forward-JIT fallback. We therefore
-REM emit one native SASS cubin per supported arch at the link (see the -gencode
-REM list below) and add a new entry, then rebuild, when a new GPU generation ships.
-REM nvcc forbids -dlto beside -gencode at compile (hence code=lto_86), but needs
-REM the full -gencode list at the link.
+REM is frozen to the exact cubins we ship, no forward-JIT fallback. One native
+REM SASS cubin per supported arch is therefore emitted at the link, from the
+REM manifest above. nvcc forbids -dlto beside -gencode at compile (hence
+REM code=lto_<floor>), but needs the full -gencode list at the link.
 set NVCC_COMMON=-std=c++17 --expt-relaxed-constexpr --extended-lambda -O3 -Wno-deprecated-gpu-targets
-set NVCC_DEFINES=-DWIN32 -DNDEBUG -D_WINDOWS -D_USRDLL -D__NVCC__ -DEIGEN_WARNINGS_DISABLED -DTHRUST_IGNORE_DEPRECATED_CPP_DIALECT -DCUB_IGNORE_DEPRECATED_CPP_DIALECT
+set NVCC_DEFINES=-DWIN32 -DNDEBUG -D_WINDOWS -D_USRDLL -D__NVCC__ -DEIGEN_WARNINGS_DISABLED -DTHRUST_IGNORE_DEPRECATED_CPP_DIALECT -DCUB_IGNORE_DEPRECATED_CPP_DIALECT -DPPF_SHIPPED_ARCH_STR="\"!ARCH_LIST_STR!\""
 set NVCC_INCLUDES=-I"%EIGEN_DIR%"
 set NVCC_XCOMPILER=-Xcompiler "/EHsc /W0 /MD /O2"
 set NVCC_SUPPRESS=--diag-suppress=1222,2527,2529,2651,2653,2668,2669,2670,2671,2735,2737,2739,20012,20011,20014,177,940,1394
@@ -207,10 +260,10 @@ set NVCC_SUPPRESS=--diag-suppress=1222,2527,2529,2651,2653,2668,2669,2670,2671,2
 set OBJ_DIR=%OUT_DIR%\obj
 if not exist "%OBJ_DIR%" mkdir "%OBJ_DIR%"
 
-echo Compiling CUDA TUs to LTO intermediates (code=lto_86)...
+echo Compiling CUDA TUs to LTO intermediates (code=lto_!ARCH_FLOOR!)...
 set OBJS=
 for %%f in (%CU_SRCS%) do (
-    %NVCC% -dc -gencode arch=compute_86,code=lto_86 %NVCC_COMMON% %NVCC_DEFINES% %NVCC_INCLUDES% %NVCC_XCOMPILER% %NVCC_SUPPRESS% "%%f" -o "%OBJ_DIR%\%%~nf.obj" || exit /b 1
+    %NVCC% -dc -gencode arch=compute_!ARCH_FLOOR!,code=lto_!ARCH_FLOOR! %NVCC_COMMON% %NVCC_DEFINES% %NVCC_INCLUDES% %NVCC_XCOMPILER% %NVCC_SUPPRESS% "%%f" -o "%OBJ_DIR%\%%~nf.obj" || exit /b 1
     set OBJS=!OBJS! "%OBJ_DIR%\%%~nf.obj"
 )
 
@@ -220,11 +273,13 @@ for %%f in (%CPP_SRCS%) do (
     set OBJS=!OBJS! "%OBJ_DIR%\%%~nf.obj"
 )
 
-echo Device-linking with LTO (-dlto: native SASS cubins sm_86/89/90/100/120, no PTX)...
-REM SASS is forward-compatible within a major version: sm_86 covers sm_87 (Orin)
-REM and sm_89 (Ada: RTX 40, L40S); sm_90 Hopper; sm_100 Blackwell DC (B200);
-REM sm_120 Blackwell consumer (RTX 50-series). Add a cubin + rebuild for new archs.
-REM Keep in sync with SUPPORTED_SM in crates\ppf-cts-core\src\utils.rs (launch gate).
+echo Device-linking with LTO (-dlto: native SASS cubins !ARCH_LIST_STR!, no PTX)...
+REM SASS is forward-compatible within a major version, so a cubin covers a device
+REM of the same major whose minor is at or above it: sm_86 covers sm_87 (Orin) and
+REM sm_89 (Ada: RTX 40, L40S); sm_90 Hopper; sm_100 Blackwell DC (B200); sm_120
+REM Blackwell consumer (RTX 50-series). Adding a generation is one line in
+REM cuda_arch.txt plus a rebuild; the launch gate follows from the same file, so
+REM there is nothing here to keep in sync by hand.
 REM
 REM -t runs the per-arch optimizations concurrently (0 = one thread per CPU),
 REM matching the Linux Makefile. Each -gencode is an independent whole-program
@@ -250,7 +305,7 @@ REM trusting any comparison drawn from it.
 REM
 REM Do NOT substitute --split-compile, which parallelizes by narrowing the
 REM optimizer's scope and emitted 1.6%% more SASS in the hottest device code.
-%NVCC% -shared -dlto -t 0 -gencode arch=compute_86,code=sm_86 -gencode arch=compute_86,code=sm_89 -gencode arch=compute_86,code=sm_90 -gencode arch=compute_86,code=sm_100 -gencode arch=compute_86,code=sm_120 -Xcompiler "/MD" !OBJS! -lcudart -o "%LIB_DIR%\libsimbackend_cuda.dll"
+%NVCC% -shared -dlto -t 0 !GENCODE! -Xcompiler "/MD" !OBJS! -lcudart -o "%LIB_DIR%\libsimbackend_cuda.dll"
 if errorlevel 1 (
     echo ERROR: nvcc device-link failed
     exit /b 1

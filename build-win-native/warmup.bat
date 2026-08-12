@@ -38,7 +38,22 @@ if "%WARMUP_LOGGING%"=="" (
     REM expansion is evaluated per line at execution time, so it sees the
     REM real code. Verified on Windows Server 2025: with `%ERRORLEVEL%` a
     REM child exiting 1 reports success, with `!ERRORLEVEL!` it reports 1.
-    powershell -Command "& { cmd /c 'set WARMUP_LOGGING=1&& set NOPAUSE=!NOPAUSE!&& \"%~f0\"' 2>&1 | Tee-Object -FilePath '%LOGFILE%'; exit $LASTEXITCODE }"
+    REM
+    REM THE ENVIRONMENT IS SET BY POWERSHELL, NOT BY A `set ... &&` CHAIN
+    REM INSIDE THE cmd STRING, and that is load-bearing rather than tidier.
+    REM Passing the script as `\"%~f0\"` inside the -Command string requires
+    REM escaped quotes, and that spelling loses the child's exit code: the
+    REM pipeline reports 0 however the child exited, so `exit $LASTEXITCODE`
+    REM and `!ERRORLEVEL!` both faithfully forward a zero and a failed warmup
+    REM is reported to CI as success. It then surfaces two steps later as
+    REM build.bat's "Portable MSVC not found", which names neither the failure
+    REM nor the step that had it. Measured on Windows Server 2025, A/B on one
+    REM host: with the escaped-quote form a child exiting 1 gives 0, and with
+    REM this form it gives 1. Every layer propagates correctly when tested
+    REM alone (the Tee pipeline, the `set ... &&` chain, `exit /b` from a
+    REM nested block), so the fault appears only in composition and cannot be
+    REM found by reading any single line.
+    powershell -NoProfile -Command "& { $env:WARMUP_LOGGING='1'; $env:NOPAUSE='!NOPAUSE!'; cmd /c '%~f0' 2>&1 | Tee-Object -FilePath '%LOGFILE%'; exit $LASTEXITCODE }"
     exit /b !ERRORLEVEL!
 )
 
@@ -401,7 +416,18 @@ if not exist "%MSVC_SETUP%" (
 
     echo Installing MSVC to %MSVC_DIR% (this takes a while^)...
     pushd "%BUILD_WIN%"
-    "%PYTHON%" "!PBT_SCRIPT!" --accept-license --vs 2022
+    REM The compiler and SDK versions come from the manifest, not from
+    REM portable-msvc.py's `max()` over whatever Microsoft publishes today.
+    if not defined MSVC_VERSION (
+        echo ERROR: MSVC_VERSION is not set by scripts\downloads.txt
+        exit /b 1
+    )
+    if not defined WINDOWS_SDK_VERSION (
+        echo ERROR: WINDOWS_SDK_VERSION is not set by scripts\downloads.txt
+        exit /b 1
+    )
+    echo Pinned toolchain: MSVC !MSVC_VERSION!, Windows SDK !WINDOWS_SDK_VERSION!
+    "%PYTHON%" "!PBT_SCRIPT!" --accept-license --vs 2022 --msvc-version !MSVC_VERSION! --sdk-version !WINDOWS_SDK_VERSION!
     REM Capture the installer's exit code BEFORE popd: popd can reset
     REM errorlevel and hide a failed MSVC install.
     set MSVC_RC=!errorlevel!

@@ -210,6 +210,16 @@ class SSHState(PropertyGroup):
         subtype="FILE_PATH",
         default=default_key_path,
     )  # pyright: ignore
+    proxy_jump: StringProperty(
+        name="Proxy Jump",
+        default="",
+        description=(
+            "Jump host to tunnel the connection through, written as ssh -J "
+            "takes it: [user@]host[:port], comma separated for a chain. "
+            "Leave empty to use the ProxyJump entry ~/.ssh/config gives for "
+            "the host, if it has one"
+        ),
+    )  # pyright: ignore
     docker_path: StringProperty(
         name="Container Path", default=""
     )  # pyright: ignore

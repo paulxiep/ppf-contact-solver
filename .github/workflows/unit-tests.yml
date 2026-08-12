@@ -149,11 +149,20 @@ jobs:
         # deliberately not installed, so collection order is
         # deterministic. The cbor2 pin is read from the add-on's own wheel
         # manifest so it cannot drift from what Blender ships.
+        #
+        # paramiko is here for one suite. The add-on installs it at run time
+        # rather than bundling it, so nothing else in this tier imports it,
+        # and without it _ssh_jump_transport_.py skips every run: it opens a
+        # real ProxyJump chain against two loopback sshd processes, and it is
+        # the only coverage of the hop loop that is not a stub. A skip is
+        # honest but buys nothing, so the package is installed to make the
+        # gate live on the POSIX legs. The Windows leg skips it regardless,
+        # since the suite needs a POSIX sshd.
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest \
             numpy scipy trimesh pywavefront plyfile pillow \
-            matplotlib tqdm pythreejs tabulate requests psutil tomli \
+            matplotlib tqdm pythreejs tabulate requests psutil tomli paramiko \
             "$(python blender_addon/wheels/fetch.py --pin)"
 
       # Debug, not release: these are correctness tests and this tier

@@ -88,7 +88,9 @@ their own key and the add-on will trust it. Mitigations:
   terminal (which *does* honor `known_hosts`), then point the add-on
   at `localhost:<forwarded-port>`. The add-on's weak policy now only
   applies to a loopback handshake, which a network attacker cannot
-  influence.
+  influence. The panel's own **Proxy Jump** is a convenience rather
+  than a substitute here: it dials the jump host with paramiko, so the
+  weak policy applies to that handshake as well.
 - **Avoid public networks for first-run on production hosts.** If you
   have to, verify the SSH fingerprint out of band after connecting
   (for example, by logging in from a known-good machine and checking
@@ -149,16 +151,19 @@ the authoritative list. The ones worth flagging here:
 | ------ | ----------- |
 | `StrictHostKeyChecking` | Ignored. See [Host-key verification](#host-key-verification-trust-on-first-use). |
 | `UserKnownHostsFile` | Ignored. `known_hosts` is never consulted. |
-| `ProxyJump` / `ProxyCommand` | Ignored. Bring up the jump yourself with `ssh -L`. |
+| `ProxyJump` | Honored. Each hop is dialed by paramiko under the same weak host-key policy as the destination, so a chain widens the trust-on-first-use surface to every jump host in it. |
+| `ProxyCommand` | Ignored. Bring up the jump yourself with `ssh -L`. |
 | `IdentitiesOnly` | Ignored. paramiko will try the configured key, then every key the agent offers, then any `id_rsa` / `id_dsa` / `id_ecdsa` / `id_ed25519` key it finds in `~/.ssh/`. |
 | `PreferredAuthentications` | Ignored. paramiko picks the auth method. |
 | `CertificateFile` | Ignored as an `ssh_config` directive. However, if a matching `<key>-cert.pub` file exists alongside a private key (either the configured `key_path` or a discoverable `~/.ssh/id_*` key), paramiko loads and uses it automatically. Explicit `CertificateFile` entries in `~/.ssh/config` are not read. |
 
 If your environment depends on any of these for its security posture
-(bastion-only access, certificate-gated auth, pinned host keys), bring
-up `ssh -L` yourself from a terminal so that the system `ssh` binary
-handles the sensitive part of the connection and the add-on only talks
-to `localhost`.
+(certificate-gated auth, pinned host keys), bring up `ssh -L` yourself
+from a terminal so that the system `ssh` binary handles the sensitive
+part of the connection and the add-on only talks to `localhost`. That
+holds for bastion-only access too whenever the bastion is the part you
+need verified: the add-on can route through it, but it does so under the
+same weak host-key policy it applies everywhere else.
 
 ## Shared Solver Hosts
 
@@ -238,7 +243,8 @@ disk.
    into `ssh-agent`.
 3. Bring up a trusted tunnel from a terminal (`ssh -L
    2222:gpu01.example.com:22 bastion.example.com`) rather than letting
-   the add-on dial the hostile network directly.
+   the add-on dial the hostile network directly, whether that dialing
+   would be to the host itself or through the panel's **Proxy Jump**.
 4. Point the add-on at `localhost:2222`, leaving the weak host-key
    policy applied only to loopback.
 5. On the remote, verify the server port is not reachable from the

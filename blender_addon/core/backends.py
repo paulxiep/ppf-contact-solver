@@ -573,11 +573,17 @@ class SSHBackend:
         directory: str,
         port: int,
         container: str = "",
+        jump_clients: list | None = None,
     ) -> None:
         self._instance = instance
         self._directory = directory
         self._port = port
         self._container = container
+        # The jump hosts the session is tunneled through, ordered outward from
+        # this machine. Each one carries the channel the next hop runs over, so
+        # the backend owns them for as long as it owns the session and closes
+        # them in reverse on disconnect.
+        self._jump_clients = list(jump_clients or [])
 
     @property
     def backend_type(self) -> str:
@@ -659,6 +665,9 @@ class SSHBackend:
         if self._instance:
             self._instance.close()
             self._instance = None
+        # Closed from the far end inward, so a hop is only torn down once
+        # nothing is still tunneled over it.
+        _close_jump_clients(self._jump_clients)
 
     def is_alive(self) -> bool:
         if not self._instance:
@@ -1084,30 +1093,114 @@ class WinNativeBackend:
 # Factory
 # ---------------------------------------------------------------------------
 
+def _close_jump_clients(clients: list) -> None:
+    """Close and drop every jump client, from the far end inward.
+
+    A close that fails is not worth reporting: the caller is either tearing
+    the session down or already carrying the error that brought it here, and
+    a hop left half-closed is dropped with the transport either way.
+    """
+    while clients:
+        try:
+            clients.pop().close()
+        except Exception:
+            pass
+
+
+def _open_jump_chain(
+    paramiko: Any, jumps: list, target_host: str, target_port: int, keepalive: int
+) -> tuple[list, Any]:
+    """Connect through *jumps* in order and return the clients and the socket.
+
+    Each hop is opened over the channel the previous hop forwards, and the
+    returned socket is a channel from the last hop to the target, which is
+    what paramiko's ``sock`` argument expects. The chain is torn down before
+    the error is re-raised if any hop fails, since a half-open chain would
+    otherwise hold sockets open with nothing left to close them.
+
+    The channel destination is the address as this machine resolved it, which
+    is what ssh sends a jump host as well: the name is resolved once, here,
+    rather than depending on what the bastion's own resolver would answer.
+    """
+    clients: list = []
+    sock = None
+    try:
+        for index, hop in enumerate(jumps):
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client.connect(
+                hostname=hop["host"],
+                port=hop.get("port", 22),
+                username=hop.get("username"),
+                key_filename=hop.get("key_path"),
+                sock=sock,
+                compress=True,
+            )
+            transport = client.get_transport()
+            transport.set_keepalive(keepalive)
+            clients.append(client)
+            if index + 1 < len(jumps):
+                next_hop = jumps[index + 1]
+                dest = (next_hop["host"], next_hop.get("port", 22))
+            else:
+                dest = (target_host, target_port)
+            sock = transport.open_channel(
+                kind="direct-tcpip",
+                dest_addr=dest,
+                src_addr=("localhost", 0),
+            )
+    except Exception as exc:
+        # Read the hop that failed before the teardown empties the list: it is
+        # the one past the last connected client, and the channel to the next
+        # hop is opened in the same iteration that connected it.
+        failed = jumps[min(len(clients), len(jumps) - 1)]
+        _close_jump_clients(clients)
+        raise Exception(
+            f"Jump host {failed['host']}:{failed.get('port', 22)} failed: {exc}"
+        ) from exc
+    return clients, sock
+
+
 def create_backend(backend_type: str, config: dict) -> ConnectionBackend:
     """Create a ConnectionBackend from a type tag and config dict.
 
     The *config* dict keys vary by backend_type:
 
     - ``ssh``: host, port, username, key_path, path, container,
-               keepalive_interval, server_port
+               keepalive_interval, jumps, server_port
     - ``docker``: container, path, server_port
     - ``local``: path, server_port
     - ``win_native``: path, server_port
+
+    ``jumps`` is the resolved ProxyJump chain: one dict per hop, ordered
+    outward from this machine, each holding the same host / port / username /
+    key_path keys as the target.
     """
     if backend_type == "ssh":
         from .module import import_module
         paramiko = import_module("paramiko")
+        keepalive = config.get("keepalive_interval", DEFAULT_SSH_KEEPALIVE_INTERVAL)
+        jump_clients, sock = _open_jump_chain(
+            paramiko,
+            config.get("jumps") or [],
+            config["host"],
+            config.get("port", 22),
+            keepalive,
+        )
         instance = paramiko.SSHClient()
         instance.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        instance.connect(
-            hostname=config["host"],
-            port=config.get("port", 22),
-            username=config.get("username"),
-            key_filename=config.get("key_path"),
-            compress=True,
-        )
-        keepalive = config.get("keepalive_interval", DEFAULT_SSH_KEEPALIVE_INTERVAL)
+        try:
+            instance.connect(
+                hostname=config["host"],
+                port=config.get("port", 22),
+                username=config.get("username"),
+                key_filename=config.get("key_path"),
+                sock=sock,
+                compress=True,
+            )
+        except Exception:
+            _close_jump_clients(jump_clients)
+            raise
         instance.get_transport().set_keepalive(keepalive)
 
         backend = SSHBackend(
@@ -1115,6 +1208,7 @@ def create_backend(backend_type: str, config: dict) -> ConnectionBackend:
             directory=config["path"],
             port=config.get("server_port", DEFAULT_SERVER_PORT),
             container=config.get("container", ""),
+            jump_clients=jump_clients,
         )
 
         # If there's a Docker container over SSH, verify it's running

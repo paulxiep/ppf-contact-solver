@@ -1,7 +1,13 @@
-"""SSH config file parsing utility for resolving host aliases."""
+"""SSH config file parsing utility for resolving host aliases.
+
+Besides the connection fields for a single host, this resolves ``ProxyJump``
+into the ordered list of hops a connection has to be tunneled through, which
+is what lets the add-on reach a solver host that is only routable from a
+bastion.
+"""
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import List, Optional, Tuple
 import os
 import fnmatch
 
@@ -13,6 +19,12 @@ import fnmatch
 _DEBUG = os.environ.get("PPF_SSH_CONFIG_DEBUG", "") not in ("", "0")
 
 
+# ``ProxyJump none`` is how ssh_config spells "reach this host directly", so
+# a Host block can opt out of a jump host a wildcard block set for everything
+# else. It is the only value that is not a jump destination.
+JUMP_NONE = "none"
+
+
 @dataclass
 class SSHConfigEntry:
     """Resolved SSH configuration for a host."""
@@ -21,6 +33,7 @@ class SSHConfigEntry:
     port: int
     user: Optional[str]
     identity_file: Optional[str]
+    proxy_jump: Optional[str] = None
 
 
 @dataclass
@@ -32,6 +45,7 @@ class SSHHostConfig:
     port: Optional[int] = None
     user: Optional[str] = None
     identity_file: Optional[str] = None
+    proxy_jump: Optional[str] = None
 
 
 def _parse_ssh_config_file(
@@ -127,6 +141,8 @@ def _parse_ssh_config_file(
                         current_host.user = value
                     elif keyword == "identityfile":
                         current_host.identity_file = os.path.expanduser(value)
+                    elif keyword == "proxyjump":
+                        current_host.proxy_jump = value
 
         # Don't forget the last host block
         if current_host is not None:
@@ -201,6 +217,7 @@ def resolve_ssh_config(
     resolved_port: Optional[int] = None
     resolved_user: Optional[str] = None
     resolved_identity_file: Optional[str] = None
+    resolved_proxy_jump: Optional[str] = None
 
     for host_config in all_hosts:
         # Check if any pattern matches the host
@@ -223,18 +240,139 @@ def resolve_ssh_config(
             resolved_user = host_config.user
         if resolved_identity_file is None and host_config.identity_file is not None:
             resolved_identity_file = host_config.identity_file
+        if resolved_proxy_jump is None and host_config.proxy_jump is not None:
+            resolved_proxy_jump = host_config.proxy_jump
 
     result = SSHConfigEntry(
         hostname=resolved_hostname if resolved_hostname else host,
         port=resolved_port if resolved_port else default_port,
         user=resolved_user,
         identity_file=resolved_identity_file,
+        proxy_jump=resolved_proxy_jump,
     )
 
     if _DEBUG:
         _log(
             f"Resolved: hostname={result.hostname}, port={result.port}, "
-            f"user={result.user}, identity_file={result.identity_file}"
+            f"user={result.user}, identity_file={result.identity_file}, "
+            f"proxy_jump={result.proxy_jump}"
         )
 
     return result
+
+
+def split_host_spec(
+    spec: str, allow_port: bool = True
+) -> Tuple[Optional[str], str, Optional[int]]:
+    """Split ``[user@]host[:port]`` into ``(user, host, port)``.
+
+    An IPv6 literal carries colons of its own, so a port may only be attached
+    to the bracketed form (``[2001:db8::1]:2222``); a bare literal is read as
+    an address with no port. ``allow_port`` is False for an ssh destination,
+    where ``host:port`` is not the syntax ssh accepts and a colon therefore
+    belongs to the address.
+
+    Raises ValueError when the spec names no host or carries an unusable port.
+    """
+    text = spec.strip()
+    if not text:
+        raise ValueError("empty host specification")
+
+    user: Optional[str] = None
+    if "@" in text:
+        user, _, text = text.rpartition("@")
+        if not user:
+            raise ValueError(f"'{spec}' has an empty user name")
+        if not text:
+            raise ValueError(f"'{spec}' names no host")
+
+    port: Optional[int] = None
+    if text.startswith("["):
+        end = text.find("]")
+        if end < 0:
+            raise ValueError(f"'{spec}' has an unterminated '[' around the address")
+        host = text[1:end]
+        rest = text[end + 1:]
+        if rest.startswith(":"):
+            port = _parse_port(rest[1:], spec)
+        elif rest:
+            raise ValueError(f"'{spec}' has trailing text after the address")
+    elif allow_port and text.count(":") == 1:
+        host, _, port_text = text.partition(":")
+        port = _parse_port(port_text, spec)
+    else:
+        host = text
+
+    if not host:
+        raise ValueError(f"'{spec}' names no host")
+    return user, host, port
+
+
+def _parse_port(text: str, spec: str) -> int:
+    try:
+        port = int(text)
+    except ValueError:
+        raise ValueError(f"'{spec}' has a non-numeric port '{text}'") from None
+    if not 1 <= port <= 65535:
+        raise ValueError(f"'{spec}' has a port outside 1-65535")
+    return port
+
+
+def resolve_jump_chain(
+    spec: str, default_port: int = 22, config_path: Optional[str] = None
+) -> List[SSHConfigEntry]:
+    """Resolve a ``ProxyJump`` spec into the hops to tunnel through, in order.
+
+    The list is ordered outward from the client: hop 0 is reached directly,
+    hop 1 through hop 0, and the final target through the last entry. Each hop
+    is resolved through the ssh config exactly as a target host is, so an alias
+    brings its own ``HostName`` / ``Port`` / ``User`` / ``IdentityFile``, and a
+    hop that carries a ``ProxyJump`` of its own contributes its hops ahead of
+    itself. A user name or port written into the spec overrides what the config
+    says for that alias, which is the precedence ssh gives the command line.
+
+    ``none`` resolves to an empty chain. Raises ValueError on a malformed spec
+    or on a jump loop, since either one would otherwise surface as a connection
+    attempt against the wrong host.
+    """
+    return _resolve_jump_chain(spec, default_port, config_path, ())
+
+
+def _resolve_jump_chain(
+    spec: str,
+    default_port: int,
+    config_path: Optional[str],
+    pending: Tuple[str, ...],
+) -> List[SSHConfigEntry]:
+    if spec.strip().lower() == JUMP_NONE:
+        return []
+
+    hops: List[SSHConfigEntry] = []
+    for token in spec.split(","):
+        if not token.strip():
+            raise ValueError(f"'{spec}' has an empty jump host")
+        if token.strip().lower() == JUMP_NONE:
+            raise ValueError(f"'{spec}' combines 'none' with a jump host")
+
+        user, host, port = split_host_spec(token)
+        if host in pending:
+            trail = " -> ".join(pending + (host,))
+            raise ValueError(f"jump hosts loop back on themselves: {trail}")
+
+        config = resolve_ssh_config(host, default_port, config_path)
+        if config.proxy_jump:
+            hops.extend(
+                _resolve_jump_chain(
+                    config.proxy_jump, default_port, config_path, pending + (host,)
+                )
+            )
+        hops.append(
+            SSHConfigEntry(
+                hostname=config.hostname,
+                port=port if port else config.port,
+                user=user if user else config.user,
+                identity_file=config.identity_file,
+            )
+        )
+
+    return hops

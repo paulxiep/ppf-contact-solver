@@ -42,6 +42,24 @@ FILE_GET_PIP=get-pip.py
 URL_PORTABLE_MSVC=https://gist.github.com/mmozeiko/7f3162ec2988e81e56d5c4e22cde9977/raw/ba48b0a3d9ea05c6caa5e583eda60fa7510da4bc/portable-msvc.py
 FILE_PORTABLE_MSVC=portable-msvc.py
 
+# The compiler and SDK the Windows binary is built with. Pinned here for the
+# same reason every URL above is: without these, portable-msvc.py takes
+# `max()` of whatever Microsoft currently publishes, so two builds of the same
+# commit can use different compilers and the shipped executable is not
+# reproducible from its source revision alone.
+#
+# These two values are what the unpinned selection resolved to on 2026-08-11,
+# so pinning them changes nothing about the toolchain today and only fixes it
+# in place. Note the maxima are NOT the newest versions the manifest lists
+# (14.51 and 28000 at that date): those are previews, and portable-msvc.py
+# excludes them unless --preview is passed.
+#
+# To move the pin, run `portable-msvc.py --show-versions` for the list, and
+# verify a full build on a Windows host before committing, exactly as the
+# gist revision above requires.
+MSVC_VERSION=14.44
+WINDOWS_SDK_VERSION=26100
+
 URL_EIGEN=https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip
 FILE_EIGEN=eigen-3.4.0.zip
 

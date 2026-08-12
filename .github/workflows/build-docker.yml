@@ -9,9 +9,11 @@
 # ubuntu-latest runner is only an orchestrator: it assumes an AWS OIDC role,
 # launches one ephemeral Deep Learning GPU EC2 instance, and drives docker build
 # + `docker run --gpus all` over an EC2 Instance Connect SSH tunnel, then always
-# terminates the instance. A GPU is required because the image ships an sm_86
-# SASS anchor plus compute_86 PTX that only JITs forward; the default g6/g6e
-# (L4/L40S, sm_89) run it, while an older card (e.g. a T4, sm_75) cannot. The
+# terminates the instance. A GPU is required because the image ships one native
+# SASS cubin per architecture listed in
+# crates/ppf-cts-solver/src/cpp/cuda_arch.txt and no JIT-able PTX at all; the
+# default g6/g6e (L4/L40S, sm_89) run it, while an older card (e.g. a T4,
+# sm_75) cannot. The
 # docker build itself is a CUDA cross-compile and needs no GPU, but is run on the
 # same instance to keep the build context and the smoke-tested image co-located.
 

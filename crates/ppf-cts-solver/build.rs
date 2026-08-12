@@ -171,9 +171,15 @@ fn main() {
         dir.push("lib");
 
         if !emulated {
+            let image = dir.join(format!("lib{lib_name}.so"));
+            // The image must carry exactly the architectures the manifest asked
+            // for. Checked before the SASS scan below, since that scan
+            // enumerates the same architectures and a mis-enumeration there is
+            // this failure seen one step later.
+            arch_guard::check(&image, cpp_dir);
             // The device image just produced must run entirely in single
             // precision. Read that off the compiled SASS, not the source.
-            fp64_guard::check(&dir.join(format!("lib{lib_name}.so")));
+            fp64_guard::check(&image);
         }
 
         println!("cargo:rustc-link-search=native={}", dir.display());
@@ -235,6 +241,124 @@ fn main() {
 // list of sites that already contain FP64. That list is the point: it does not
 // bless those sites, it pins them, so the count cannot quietly grow and each
 // entry stays visible until it is dealt with.
+// The architectures the image actually carries must be the ones cuda_arch.txt
+// asked for. The Makefile already derives its -gencode list from that manifest,
+// so this is not checking for a second hand-maintained copy; it is checking that
+// the toolchain emitted what it was told to. A cubin can go missing without the
+// build failing: a stale object from an earlier arch list reaches the link, an
+// nvcc version drops a target it does not know, or a hand-run make overrides the
+// flags. Each of those ships a binary that the run-time gate then advertises
+// support the image does not have, which is the exact failure a user meets as
+// "no kernel image is available for execution on the device".
+mod arch_guard {
+    use std::path::Path;
+    use std::process::Command;
+
+    /// Architectures `cuda_arch.txt` asks for, ascending.
+    ///
+    /// This parser is a second reader of the manifest, not a second copy of the
+    /// list: it and `ppf-cts-core`'s exist so each build script can resolve the
+    /// one file for itself, and a disagreement between them is a parser defect
+    /// rather than drift. Any failure is fatal, for the reason the manifest
+    /// gives: proceeding on an empty list checks nothing and reports a pass.
+    fn manifest_arches(cpp_dir: &str) -> Vec<u32> {
+        let manifest = Path::new(cpp_dir).join("cuda_arch.txt");
+        let text = std::fs::read_to_string(&manifest).unwrap_or_else(|e| {
+            panic!("cannot read {}: {e}", manifest.display())
+        });
+        let mut archs: Vec<u32> = text
+            .lines()
+            .filter_map(|line| {
+                let mut field = line.trim().split_whitespace();
+                match (field.next(), field.next()) {
+                    (Some("cubin"), Some(v)) => Some(v.parse::<u32>().unwrap_or_else(|e| {
+                        panic!("{}: cubin value {v:?} is not a number: {e}", manifest.display())
+                    })),
+                    _ => None,
+                }
+            })
+            .collect();
+        archs.sort_unstable();
+        archs.dedup();
+        if archs.is_empty() {
+            panic!("{}: no 'cubin' lines found", manifest.display());
+        }
+        archs
+    }
+
+    /// Architectures the image carries, ascending, or `None` when `cuobjdump`
+    /// is not installed.
+    ///
+    /// The distinction matters: an absent tool cannot answer the question,
+    /// while a tool that answers with nothing is reporting an image with no
+    /// device code. Collapsing the two into an empty list is how a check comes
+    /// to pass on no evidence.
+    fn image_arches(image: &Path) -> Option<Vec<u32>> {
+        let out = Command::new("cuobjdump").arg("--list-elf").arg(image).output().ok()?;
+        let listing = String::from_utf8_lossy(&out.stdout);
+        let mut archs: Vec<u32> = Vec::new();
+        for line in listing.lines() {
+            let mut from = 0;
+            while let Some(rel) = line[from..].find("sm_") {
+                let s = from + rel;
+                from = s + 3;
+                let digits: String =
+                    line[s + 3..].chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(v) = digits.parse::<u32>() {
+                    archs.push(v);
+                }
+            }
+        }
+        archs.sort_unstable();
+        archs.dedup();
+        Some(archs)
+    }
+
+    pub fn check(image: &Path, cpp_dir: &str) {
+        if !image.exists() {
+            return;
+        }
+        let want = manifest_arches(cpp_dir);
+        let Some(got) = image_arches(image) else {
+            println!(
+                "cargo:warning=cuobjdump not found: the device image was not \
+                 checked against cuda_arch.txt, so a missing cubin would not be \
+                 caught until a run fails on the affected GPU"
+            );
+            return;
+        };
+        if got == want {
+            // Report the evidence, so a later disagreement names the image.
+            let listed =
+                want.iter().map(|a| format!("sm_{a}")).collect::<Vec<_>>().join(", ");
+            println!("cargo:warning=device image carries {listed}");
+            return;
+        }
+        let missing: Vec<u32> = want.iter().copied().filter(|a| !got.contains(a)).collect();
+        let extra: Vec<u32> = got.iter().copied().filter(|a| !want.contains(a)).collect();
+        let render = |v: &[u32]| {
+            if v.is_empty() {
+                "none".to_string()
+            } else {
+                v.iter().map(|a| format!("sm_{a}")).collect::<Vec<_>>().join(", ")
+            }
+        };
+        panic!(
+            "the device image does not carry the architectures cuda_arch.txt \
+             asks for. Requested: {}. Present: {}. Missing: {}. Unexpected: {}. \
+             The manifest drives the -gencode list, so a mismatch means the \
+             toolchain did not emit what it was asked for: a stale object from \
+             an earlier arch list, or an nvcc that does not know a target. \
+             Remove the build directory and rebuild; if it persists, the nvcc \
+             in use cannot target the missing architecture.",
+            render(&want),
+            render(&got),
+            render(&missing),
+            render(&extra)
+        );
+    }
+}
+
 mod fp64_guard {
     use std::path::Path;
     use std::process::Command;

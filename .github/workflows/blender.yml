@@ -57,8 +57,9 @@ on:
         type: choice
         options:
           # L4 (sm_89), minimal single-GPU current gen. T4/g4dn (sm_75)
-          # is intentionally absent: the shipped cubins cover sm_86/89/
-          # 90/100/120 only, so a T4 would fail "named symbol not found".
+          # is intentionally absent: the shipped cubins are the ones listed
+          # in crates/ppf-cts-solver/src/cpp/cuda_arch.txt, none of which a
+          # T4 can run, so it would fail "named symbol not found".
           - g6.xlarge
           - g6.2xlarge
           - g6e.2xlarge

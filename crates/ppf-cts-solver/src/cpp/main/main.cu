@@ -10,6 +10,17 @@
 #define DLL_EXPORT
 #endif
 
+// The architectures this image was linked for, rendered as "sm_86, sm_89, ...".
+// Both build paths define it from cuda_arch.txt (the Makefile and build.bat
+// each pass -DPPF_SHIPPED_ARCH_STR), which is the same file the -gencode list
+// is derived from, so the text cannot name a set the link did not produce.
+// There is deliberately no default: a build path that does not define it would
+// otherwise ship a message naming architectures nobody verified, and a wrong
+// answer here is worse than no build.
+#ifndef PPF_SHIPPED_ARCH_STR
+#error "PPF_SHIPPED_ARCH_STR must be defined from cuda_arch.txt by the build"
+#endif
+
 #include "../buffer/buffer.hpp"
 #include "../contact/contact.hpp"
 #include "../csrmat/csrmat.hpp"
@@ -1874,6 +1885,12 @@ DataSet malloc_dataset(DataSet dataset, ParamSet param) {
     return dev_dataset;
 }
 
+// Launched once by initialize() to find out whether this image carries device
+// code for the GPU in front of it. It does nothing on purpose: the question is
+// whether it can be launched at all, and an empty body makes the answer depend
+// on nothing but the presence of a cubin for this architecture.
+__global__ void arch_probe_kernel() {}
+
 extern "C" DLL_EXPORT bool initialize(DataSet *dataset, ParamSet *param) {
 
     int num_device;
@@ -1887,15 +1904,16 @@ extern "C" DLL_EXPORT bool initialize(DataSet *dataset, ParamSet *param) {
         // headline kind is the coarse CudaDriver.
         ppf_fatal_set_detail(
             "no CUDA device is visible to this process; the shipped device "
-            "images cover compute capability 8.6, 8.9, 9.0, 10.0 and 12.0");
+            "images cover " PPF_SHIPPED_ARCH_STR);
         g_ppf_fatal_code = PPF_FATAL_CUDA_DRIVER;
         exit(1);
     }
 
-    // State the device's properties before anything runs on it. This gates
-    // nothing: it is the record that makes a later crash report readable,
-    // and kernelExecTimeoutEnabled in particular is not otherwise
-    // recoverable after the fact.
+    // State the device's properties before anything runs on it. The log line
+    // itself gates nothing: it is the record that makes a later crash report
+    // readable, and kernelExecTimeoutEnabled in particular is not otherwise
+    // recoverable after the fact. The architecture probe below does gate, and
+    // it names this device using what is read here.
     cudaDeviceProp props;
     int device_id = 0;
     CUDA_HANDLE_ERROR(cudaGetDevice(&device_id));
@@ -1912,6 +1930,53 @@ extern "C" DLL_EXPORT bool initialize(DataSet *dataset, ParamSet *param) {
         logging::info("cuda: the operating system's kernel-execution "
                       "watchdog is armed on this device");
     }
+
+    // Ask the device whether this image can run on it at all, instead of
+    // consulting a list of architectures. check_gpu() normally rejects an
+    // unsupported GPU before a run starts, but it reads nvidia-smi, so it
+    // cannot answer when that tool is missing or when this binary was launched
+    // directly rather than through the frontend. Device LTO embeds no JIT-able
+    // PTX, so whether a kernel can launch here is a property of the image, and
+    // the image is what is being asked: launch one that does nothing and see.
+    //
+    // This is the one check that survives the architecture list being wrong.
+    // Every other guard (the manifest the builds derive from, the build-time
+    // check of the emitted cubins, SUPPORTED_SM) compares one record against
+    // another; this compares the shipped code against the hardware in front of
+    // it, so it still reports correctly when they have all drifted together.
+    arch_probe_kernel<<<1, 1>>>();
+    cudaError_t probe = cudaGetLastError();
+    if (probe == cudaSuccess) {
+        // A launch is asynchronous. A missing cubin is reported at the launch
+        // itself, but synchronizing here keeps any error raised on completion
+        // from being read as success and then charged to whichever kernel runs
+        // next, which is the misattribution this probe exists to prevent.
+        probe = cudaDeviceSynchronize();
+    }
+    if (probe == cudaErrorNoKernelImageForDevice ||
+        probe == cudaErrorInvalidDeviceFunction ||
+        probe == cudaErrorSymbolNotFound) {
+        char detail[sizeof(g_ppf_fatal_detail)];
+        snprintf(detail, sizeof(detail),
+                 "GPU %s has compute capability %d.%d, for which this build "
+                 "ships no device code; it carries %s. Device LTO embeds no "
+                 "JIT-able PTX, so there is no forward-compatible fallback: "
+                 "running on this GPU needs a solver built for it (%s)",
+                 props.name, props.major, props.minor, PPF_SHIPPED_ARCH_STR,
+                 cudaGetErrorName(probe));
+        // Logged as well as latched: the detail reaches the addon panel through
+        // the host, but a direct run of this binary has no host to read it, and
+        // that is one of the two paths this probe exists to cover.
+        logging::info("cuda: %s", detail);
+        ppf_fatal_set_detail(detail);
+        g_ppf_fatal_code = PPF_FATAL_ARCH_UNSUPPORTED;
+        exit(1);
+    }
+    // Any other probe failure is a real CUDA error on a launch that does
+    // nothing, so it belongs to the device or the context rather than to the
+    // solver. Report it where it happened rather than letting the first real
+    // kernel inherit it.
+    CUDA_HANDLE_ERROR(probe);
 
     logging::info("cuda: allocating memory...");
     DataSet dev_dataset = malloc_dataset(*dataset, *param);

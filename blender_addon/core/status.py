@@ -58,6 +58,7 @@ CRASH_CAUSE_SUMMARY: dict[str, str] = {
     "oom": "Out of GPU memory",
     "cuda_driver": "Unrecoverable CUDA runtime or driver error",
     "watchdog_timeout": "A GPU kernel ran past the operating system's watchdog timeout",
+    "arch_unsupported": "This GPU's architecture is not in the solver's device image",
     "panic": "Solver host panicked",
     "solver_invariant": "Solver stopped on a failed internal check",
     "device_assert": "A solver invariant failed on the GPU",

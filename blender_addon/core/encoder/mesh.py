@@ -434,7 +434,7 @@ def _local_mesh_hash(obj):
     UV belongs in the key because it is part of the PHYSICS, not only of the
     shading: the solver orients each shell face's material frame from its UV,
     which is the frame ``shrink-x`` / ``shrink-y`` scale along and the one
-    ``bend-weft`` / ``bend-bias`` measure each hinge edge against. Two objects
+    ``bend-warp`` / ``bend-weft`` measure each hinge edge against. Two objects
     alike in geometry but carrying different UV layouts are different
     materials, so collapsing them onto one canonical mesh would silently hand
     every one of them the first object's material directions.
