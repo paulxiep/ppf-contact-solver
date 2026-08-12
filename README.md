@@ -30,7 +30,7 @@ involving 👚 shells, 🪵 solids, 🪢 rods, 🧱 rigid bodies and ⏳ sand. S
 
 ## ✨ Highlights
 
-- **💪 Penetration-Free Guaranteed**: Contact resolution is absolute. No snagging intersections.
+- **💪 Penetration-Free: Contact resolution is absolute. No snagging intersections.
 - **⏲ Scalable**: An extreme case includes beyond 180M contacts. Not just one million.
 - **🚲 Cache Efficient**: All on the GPU runs in single precision. No double precision.
 - **🥼 Not Rubbery**: Triangles never extend beyond strict upper bounds (e.g., 1%).
@@ -893,7 +893,7 @@ This project is owned by [ZOZO, Inc.](https://corp.zozo.com/en/) and maintained 
 
 For bug reports or feature requests, please open an issue on GitHub. For usage questions, [GitHub Discussions](https://github.com/st-tech/ppf-contact-solver/discussions) is the best place to ask. Either route is the fastest way to reach the author and keeps the conversation searchable for other users.
 
-If you would prefer to reach out privately, you can also email the author at ryoichi.ando@zozo.com. Please do not send any copyrightable materials; anything of that kind will never be read by the author and will be deleted upon receipt.
+If you would prefer to reach out privately, you can also email the author at <ryoichi.ando@zozo.com>. Please do not send any copyrightable materials; anything of that kind will never be read by the author and will be deleted upon receipt.
 
 If you used this project in a public piece of work, whether a paper, a production credit, or a personal project, the author would love to feature it here. A link to your article, project page, or website is all we need (rather than images or clips themselves, since hosting them here may run into licensing issues), and we will be happy to add it.
 
