@@ -51,7 +51,7 @@ involving 👚 shells, 🪵 solids, 🪢 rods, 🧱 rigid bodies and ⏳ sand. S
 
 > ⚠️ Built for offline uses; not real time. Some examples may run at an interactive rate.
 
-> <a name="note-penetration-free"></a>[1] Our [cubic barrier](#-technical-materials) theoretically guarantees penetration-free contact, so the guarantee is by construction and not a heuristic. Implementations do have bugs, of course, and we make no claim that a run never crashes. But upon a successful run we explicitly run an intersection checker, which confirms no penetration anywhere, 100%. Our [GitHub Actions](#-github-actions) do the same at the end of every step.
+> <a name="note-penetration-free"></a>[1] Our [cubic barrier](#-technical-materials) theoretically guarantees penetration-free contact, so the guarantee is by construction and not a heuristic. Implementations do have bugs, of course, and we make no claim that a run never crashes. But upon a successful run we explicitly run an intersection checker, which confirms no penetration anywhere, 100%. Our [GitHub Actions](#-github-actions) do the same at the end of every step. **We never leave hidden snagging intersections behind. Not 99% resolved, with 1% sneakily left tangled.**
 
 ## 🔖 Table of Contents
 
