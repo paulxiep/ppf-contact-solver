@@ -30,7 +30,7 @@ involving 👚 shells, 🪵 solids, 🪢 rods, 🧱 rigid bodies and ⏳ sand. S
 
 ## ✨ Highlights
 
-- **💪 Penetration-Free**: Contact resolution is absolute. No snagging intersections.
+- **💪 Penetration-Free**: Contact resolution is absolute. No snagging intersections. <sup>[[1]](#note-penetration-free)</sup>
 - **⏲ Scalable**: An extreme case includes beyond 180M contacts. Not just one million.
 - **🚲 Cache Efficient**: All on the GPU runs in single precision. No double precision.
 - **🥼 Not Rubbery**: Triangles never extend beyond strict upper bounds (e.g., 1%).
@@ -50,6 +50,8 @@ involving 👚 shells, 🪵 solids, 🪢 rods, 🧱 rigid bodies and ⏳ sand. S
 - **📜 Permissive License**: Apache 2.0 allows commercial and proprietary use.
 
 > ⚠️ Built for offline uses; not real time. Some examples may run at an interactive rate.
+
+> <a name="note-penetration-free"></a>[1] Our [cubic barrier](#-technical-materials) theoretically guarantees penetration-free contact, so the guarantee is by construction and not a heuristic. Implementations do have bugs, of course, and we make no claim that a run never crashes. But upon a successful run we explicitly run an intersection checker, which confirms no penetration anywhere, 100%. Our [GitHub Actions](#-github-actions) do the same at the end of every step.
 
 ## 🔖 Table of Contents
 
