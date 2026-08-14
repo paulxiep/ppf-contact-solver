@@ -30,7 +30,7 @@ involving 👚 shells, 🪵 solids, 🪢 rods, 🧱 rigid bodies and ⏳ sand. S
 
 ## ✨ Highlights
 
-- **💪 Penetration-Free**: Contact resolution is absolute. No snagging intersections. <sup>[[1]](#note-penetration-free)</sup>
+- **💪 100% Penetration-Free**: Contact resolution is absolute. No snagging intersections. <sup>[[1]](#note-penetration-free)</sup>
 - **⏲ Scalable**: An extreme case includes beyond 180M contacts. Not just one million.
 - **🚲 Cache Efficient**: All on the GPU runs in single precision. No double precision.
 - **🥼 Not Rubbery**: Triangles never extend beyond strict upper bounds (e.g., 1%).
